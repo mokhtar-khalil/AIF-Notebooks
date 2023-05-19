@@ -1,0 +1,277 @@
+---
+title: "DM-Q5-tp2"
+author: "Mohamed Moukhtar / KHALIL"
+date: "2023-04-08"
+output:
+  html_document: default
+  word_document: default
+lang: fr
+---
+
+## Data Importation:
+
+```{r}
+Demo <- read.csv("C:/Users/USER/Downloads/Demo_csv (1).csv",sep=';')
+head(Demo)
+```
+
+Produce a numerical summary of the variable "carcat":
+
+```{r}
+table(Demo$carcat)
+```
+
+Produce a numerical summary of the variable "carcat":
+
+```{r}
+library(ggplot2)
+ggplot(Demo, aes(x = carcat, fill = carcat)) +
+  geom_bar(aes(y = ..count..), width = 0.5) +
+  geom_text(aes(label = ..count..), stat = "count", 
+            position = position_stack(vjust = 0.5)) +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+```
+
+```{r}
+ggplot(Demo, aes(x = "", fill = carcat)) +
+  geom_bar(width = 1) +
+  stat_count(aes(label = paste0(scales::percent(..count../sum(..count..)), " (", ..count.., ")")),
+             geom = "text", position = position_stack(vjust = 0.5)) +
+  coord_polar(theta = "y") +
+  theme_void() +
+  labs(fill = "La categorie des voitures")
+
+```
+
+Create the variable "carcatNA" with 30% missing values:
+
+```{r}
+set.seed(123)
+sample_indices <- sample(1:nrow(Demo), round(0.3*nrow(Demo)), replace=FALSE)
+carcatNA <- Demo$carcat
+carcatNA[sample_indices]=NA
+Demo$carcatNA = carcatNA
+```
+
+Cross the variable "carcat" with "carcatNA":
+
+```{r}
+
+addmargins(table(Demo$carcat,Demo$carcatNA,useNA = 'ifany'))
+addmargins(table(Demo$carcat[sample_indices],Demo$carcatNA[sample_indices],useNA = 'ifany'))
+```
+
+## Imputation: Simple Hot-deck
+```{r}
+library(VIM)
+Demo_hd=hotdeck(Demo)
+Demo$carcat_hds=Demo_hd$carcatNA
+addmargins(table(Demo$carcat[sample_indices],Demo$carcat_hds[sample_indices],useNA = "ifany"))
+
+
+```
+Let's look at the accuracy score:
+```{r}
+
+accuracy <- sum(Demo$carcat[sample_indices] == Demo$carcat_hds[sample_indices], na.rm = TRUE) / sum(!is.na(Demo$carcat[sample_indices]))
+print(accuracy)
+```
+## Imputation: Conditional Hot-deck
+
+```{r}
+df_imp <- hotdeck(Demo, domain_var = 'income')
+Demo$carcat_hdc=df_imp$carcatNA
+addmargins(table(Demo$carcat[sample_indices],Demo$carcat_hdc[sample_indices]))
+
+
+```
+Let's look at the accuracy score for conditional hot-deck:
+```{r}
+
+accuracy <- sum(Demo$carcat[sample_indices] == Demo$carcat_hdc[sample_indices], na.rm = TRUE) / sum(!is.na(Demo$carcat[sample_indices]))
+print(accuracy)
+```
+
+## Imputation: Simple Mode
+
+
+```{r}
+getmode <- function(v) {
+  uniqv <- unique(v)
+  uniqv[which.max(tabulate(match(v, uniqv)))]
+}
+mode = getmode(Demo$carcat)
+
+carcat_ms = Demo$carcatNA
+Demo$carcat_ms <- ifelse(is.na(carcat_ms),mode,carcat_ms)
+```
+
+Output the confusion matrix and accuracy:
+
+```{r}
+
+addmargins(table(Demo$carcat[sample_indices],Demo$carcat_ms[sample_indices]))
+
+
+accuracy <- sum(Demo$carcat[sample_indices] == Demo$carcat_ms[sample_indices], na.rm = TRUE) / sum(!is.na(Demo$carcat[sample_indices]))
+print(accuracy)
+
+```
+## Imputation: Conditional Mode
+
+Create a list that contains the mode of the car category variable given the income category:
+```{r}
+Demo$carcat_mc = Demo$carcatNA
+# Get unique modalities of inccat
+inc_levels <- unique(Demo$inccat)
+  
+  # Initialize the dictionary for conditional modes
+mode_cond <- list()
+  
+  # Iterate over inccat modalities and calculate the mode of carcat
+for (inc_level in inc_levels) {
+    # Filter data by inccat modality
+    Demo_subset <- Demo[Demo$inccat == inc_level,]
+    
+    # Calculate the mode of carcat
+    car_mode <- names(sort(-table(Demo_subset$carcat)))[1]
+    
+    # Add the mode to the dictionary
+    mode_cond[[inc_level]] <- car_mode
+}
+print(mode_cond)
+
+
+
+```
+
+Perform imputation on the variable "carcat_mc":
+```{r}
+
+  # Filtrer les données avec des valeurs manquantes pour carcat
+missing_Demo <- Demo[is.na(Demo$carcat_mc),]
+  
+  # Imputer les valeurs manquantes avec les modes conditionnels
+for (i in 1:nrow(missing_Demo)) {
+    inc_level <- missing_Demo$inccat[i]
+    Demo$carcat_mc[is.na(Demo$carcatNA) & Demo$inccat == inc_level] <- mode_cond[[inc_level]]
+}
+
+```
+Evaluate this imputation using the confusion matrix and accuracy score:
+
+```{r}
+addmargins(table(Demo$carcat[sample_indices],Demo$carcat_mc[sample_indices]))
+
+accuracy <- sum(Demo$carcat[sample_indices] == Demo$carcat_mc[sample_indices], na.rm = TRUE) / sum(!is.na(Demo$carcat[sample_indices]))
+print(accuracy)
+
+```
+
+
+## Imputation: FDA
+
+```{r}
+
+nums <- unlist(lapply(Demo, is.numeric), use.names = FALSE)  
+data=Demo[ , nums]
+data$groupe=Demo$carcatNA
+base=na.omit(data)
+
+library(MASS)
+res <- lda(groupe ~.,base)
+res
+
+coef=as.matrix(res$scaling,nrow=1,ncol=6)
+
+for (i in 1:dim(base)[1]) {
+  if((base$groupe[i]) == "Economique"){
+    score1=sum(t(coef)*as.numeric(as.matrix(base[i,1:5])))}
+  if((base$groupe[i]) == "Luxe"){
+    score2=sum(t(coef)*as.numeric(as.matrix(base[i,1:5])))}
+  if((base$groupe[i]) == "Standard"){
+    score3=sum(t(coef)*as.numeric(as.matrix(base[i,1:5])))}
+  
+}
+
+
+gain <- rep(NA, dim(data)[1])
+Demo$carcatAFD <- Demo$carcatNA
+
+for (i in 1:dim(data)[1]) {
+  if (is.na(Demo$carcatNA[i]) == TRUE) {
+    gain[i] <- sum(t(coef) * as.numeric(as.matrix(data[i, 1:5])))
+    s1 <- abs(gain[i] - score1)
+    s2 <- abs(gain[i] - score2)
+    s3 <- abs(gain[i] - score3)
+    
+    if (s1 < s2 & s1 < s3 ) {
+      Demo$carcatAFD[i] <- "Economique"
+    } else if (s2 < s1 & s2 < s3 ) {
+      Demo$carcatAFD[i] <- "Luxe"
+    } else if (s3 < s1 & s3 < s2 ) {
+      Demo$carcatAFD[i] <- "Standard"
+    } 
+  }
+}
+
+```
+
+Evaluate this imputation:
+```{r}
+
+addmargins(table(Demo$carcat[sample_indices],Demo$carcatAFD[sample_indices]))
+
+
+accuracy <- sum(Demo$carcat[sample_indices] == Demo$carcatAFD[sample_indices], na.rm = TRUE) / sum(!is.na(Demo$carcat[sample_indices]))
+print(accuracy)
+
+
+```
+
+## Imputation :logit-probit
+
+```{r}
+
+library(mice)
+
+# Subset the relevant columns
+df_logit <- Demo[c("age", "inccat", "carcatNA")]
+
+# Recode carcatNA to 0/1
+df_logit$carcatNA <- ifelse(df_logit$carcatNA == "Economique",0,ifelse(df_logit$carcatNA == "Luxe", 0.5, 1))
+
+# Create a formula for logistic regression
+formula_logit <- as.formula("carcatNA ~ age + inccat")
+
+# Create a method object for logistic regression
+meth_logit <- "logreg"
+
+# Set the number of imputations
+n_imp <- 5
+
+# Impute missing values using mice
+imputed_logit <- mice(df_logit, method = meth_logit, formulas = list(formula_logit), m = n_imp)
+
+# Complete the imputation
+df_logit_imputed <- complete(imputed_logit)
+
+df_logit_imputed$carcatNA <- ifelse(df_logit_imputed$carcatNA == 0, 'Economique', ifelse(df_logit_imputed$carcatNA == 0.5,'Luxe','Standard'))
+Demo$carcat_logit = df_logit_imputed$carcatNA
+
+
+
+```
+
+Evaluate this imputation method:
+```{r}
+addmargins(table(Demo$carcat[sample_indices],Demo$carcat_logit[sample_indices]))
+
+accuracy <- sum(Demo$carcat[sample_indices] == Demo$carcat_logit[sample_indices], na.rm = TRUE) / sum(!is.na(Demo$carcat[sample_indices]))
+accuracy
+```
+
+
+
+```
